@@ -1,48 +1,54 @@
-name: Sync with Upstream
+name: Build and Merge Workflow
 
 on:
-  schedule:
-    - cron: '0 0 * * *'  # 每天0点运行一次
-  workflow_dispatch:  # 手动触发工作流
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - luci-smartdns-dev
 
 jobs:
-  sync:
+  build_and_merge:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v2
+    # Step 1: Checkout repository
+    - name: Checkout Repository
+      uses: actions/checkout@v3
       with:
         fetch-depth: 0
 
-    - name: Set up Git
+    # Step 2: Check if branch exists and checkout
+    - name: Fetch and Checkout Branch
       run: |
-        git config --global user.email "your-email@example.com"
-        git config --global user.name "your-username"
+        git fetch --all
+        if git show-ref --verify --quiet refs/remotes/origin/luci-smartdns-dev; then
+          git checkout -b luci-smartdns-dev origin/luci-smartdns-dev
+        else
+          echo "Branch luci-smartdns-dev does not exist. Falling back to main branch."
+          git checkout main
+        fi
 
-    - name: Add upstream repository
+    # Step 3: Attempt to merge
+    - name: Merge Branch
       run: |
-        git remote add upstream https://github.com/xiaorouji/openwrt-passwall.git
-        git fetch upstream
+        git merge main || echo "Merge conflicts detected. Please resolve manually."
+        if [ -f "$(git ls-files -u | head -n 1)" ]; then
+          git status
+          exit 1
+        fi
 
-    - name: Checkout luci-smartdns-dev branch
+    # Step 4: Push changes
+    - name: Push Changes
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        git checkout -b luci-smartdns-dev origin/luci-smartdns-dev || git checkout luci-smartdns-dev
+        git push origin luci-smartdns-dev || echo "Push failed. Please check permissions or conflicts."
 
-    - name: Merge upstream changes
+    # Step 5: Handle merge conflicts (optional)
+    - name: Merge Conflicts Handling
+      if: failure()
       run: |
-        git merge upstream/luci-smartdns-dev --allow-unrelated-histories || true
-
-    - name: Handle Merge Conflicts
-      if: failure() # 只在合并失败时运行此步骤
-      run: |
-        echo "Merge conflicts detected. Please resolve the conflicts manually."
+        echo "There are unresolved merge conflicts. Exiting workflow."
         git status
         exit 1
-
-    - name: Push changes
-      if: success()
-      env:
-        GH_PAT: ${{ secrets.GH_PAT }}
-      run: |
-        git push https://${{ secrets.GH_PAT }}@github.com/EinbeckSt/openwrt-passwall.git luci-smartdns-dev
